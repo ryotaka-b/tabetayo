@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.json">
+<title>ごはんメモ</title>
+<style>
+  body { font-family: -apple-system, system-ui; margin: 16px; }
+  header { display:flex; gap:8px; align-items:center; }
+  input, textarea, select, button { font-size:16px; width:100%; padding:10px; margin-top:8px; }
+  .row { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .card { border:1px solid #ddd; border-radius:10px; padding:10px; margin:10px 0; }
+  .thumb { width:100%; height:auto; border-radius:8px; }
+  .meta { font-size:12px; color:#666; margin-top:4px; }
+  .actions { display:flex; gap:8px; margin-top:8px; }
+  #list { margin-top:12px; }
+  #empty { color:#999; text-align:center; margin-top:24px; }
+</style>
+<body>
+<header>
+  <h1 style="margin:0">🍚 ごはんメモ</h1>
+</header>
+
+<!-- 追加フォーム -->
+<div class="card">
+  <input type="file" id="photo" accept="image/*" capture="environment">
+  <input id="title" placeholder="店名 or 商品名">
+  <div class="row">
+    <input id="place" placeholder="場所（任意）">
+    <select id="rating" aria-label="評価">
+      <option value="">★評価（任意）</option>
+      <option>★☆☆☆☆</option><option>★★☆☆☆</option>
+      <option>★★★☆☆</option><option>★★★★☆</option><option>★★★★★</option>
+    </select>
+  </div>
+  <textarea id="note" rows="3" placeholder="感想（味・量・価格・また行く？など）"></textarea>
+  <button id="save">保存する</button>
+</div>
+
+<!-- 検索 -->
+<input id="q" placeholder="検索（店名/商品名・感想）">
+
+<div id="list"></div>
+<div id="empty" hidden>まだ記録がありません。</div>
+
+<script>
+/* ===== IndexedDB（画像含むローカル保存） ===== */
+const DB_NAME = 'meals-db', STORE = 'entries', VER = 1;
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, VER);
+    req.onupgradeneeded = (e)=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(STORE)) {
+        const os = db.createObjectStore(STORE, { keyPath: 'id', autoIncrement:true });
+        os.createIndex('createdAt','createdAt');
+      }
+    };
+    req.onsuccess = ()=>res(req.result);
+    req.onerror = ()=>rej(req.error);
+  });
+}
+async function tx(mode='readonly') {
+  const db = await openDB();
+  return db.transaction(STORE, mode).objectStore(STORE);
+}
+async function addEntry(entry) {
+  const store = await tx('readwrite');
+  return new Promise((res, rej)=>{
+    const r = store.add(entry);
+    r.onsuccess = ()=>res(r.result);
+    r.onerror = ()=>rej(r.error);
+  });
+}
+async function getAll() {
+  const store = await tx('readonly');
+  return new Promise((res, rej)=>{
+    const r = store.getAll();
+    r.onsuccess = ()=>res(r.result.sort((a,b)=>b.createdAt-a.createdAt));
+    r.onerror = ()=>rej(r.error);
+  });
+}
+async function remove(id) {
+  const store = await tx('readwrite');
+  return new Promise((res, rej)=>{
+    const r = store.delete(id);
+    r.onsuccess = ()=>res(true);
+    r.onerror = ()=>rej(r.error);
+  });
+}
+
+/* ===== 画像を縮小（長辺1280px）してBlob化 ===== */
+function fileToResizedBlob(file, max=1280, type='image/jpeg', quality=0.9) {
+  return new Promise((res, rej)=>{
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; };
+    reader.onerror = rej;
+    img.onload = ()=>{
+      let {width:w, height:h} = img;
+      const scale = Math.min(1, max / Math.max(w,h));
+      const cw = Math.round(w*scale), ch = Math.round(h*scale);
+      const c = document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, cw, ch);
+      c.toBlob(b => res(b), type, quality);
+    };
+    img.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ===== UI ===== */
+const el = id => document.getElementById(id);
+const photo = el('photo'), titleEl = el('title'), placeEl = el('place');
+const ratingEl = el('rating'), noteEl = el('note'), saveBtn = el('save');
+const q = el('q'), list = el('list'), empty = el('empty');
+
+function fmtDate(ts){
+  const d = new Date(ts);
+  const pad = n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function render(filter=''){
+  const items = await getAll();
+  list.innerHTML = '';
+  const f = filter.trim().toLowerCase();
+  let cnt = 0;
+  for(const it of items){
+    const hay = `${it.title||''} ${it.place||''} ${it.note||''}`.toLowerCase();
+    if(f && !hay.includes(f)) continue;
+    cnt++;
+    const card = document.createElement('div'); card.className='card';
+    const img = document.createElement('img'); img.className='thumb';
+    if (it.photoURL) { img.src = it.photoURL; card.appendChild(img); }
+    const h2 = document.createElement('h3'); h2.textContent = it.title || '(名称未入力)';
+    const meta = document.createElement('div'); meta.className='meta';
+    meta.textContent = [it.place, it.rating, fmtDate(it.createdAt)].filter(Boolean).join('・');
+    const memo = document.createElement('div'); memo.textContent = it.note || '';
+    const actions = document.createElement('div'); actions.className='actions';
+    const del = document.createElement('button'); del.textContent = '削除';
+    del.onclick = async ()=>{ if(confirm('削除しますか？')){ await remove(it.id); render(q.value); } };
+    actions.appendChild(del);
+    card.append(h2, meta, memo, actions);
+    list.appendChild(card);
+  }
+  empty.hidden = cnt !== 0;
+}
+
+saveBtn.onclick = async ()=>{
+  saveBtn.disabled = true;
+  try{
+    let blob = null, url = '';
+    if (photo.files && photo.files[0]) {
+      blob = await fileToResizedBlob(photo.files[0]);
+      url = URL.createObjectURL(blob);
+    }
+    const entry = {
+      title: titleEl.value.trim(),
+      place: placeEl.value.trim(),
+      rating: ratingEl.value,
+      note: noteEl.value.trim(),
+      createdAt: Date.now(),
+      photo: blob,          // Blob本体（IndexedDBに保存）
+      photoURL: url         // 表示用の一時URL
+    };
+    await addEntry(entry);
+    titleEl.value = ''; placeEl.value=''; ratingEl.value=''; noteEl.value=''; photo.value='';
+    render(q.value);
+    alert('保存しました');
+  } catch(e){ alert('保存に失敗しました: ' + e); }
+  finally{ saveBtn.disabled = false; }
+};
+
+q.oninput = ()=>render(q.value);
+
+/* Service Worker登録 */
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js'); }
+
+/* 起動時表示 */
+render();
+</script>
+</body>
+</html>
