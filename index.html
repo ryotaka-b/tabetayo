@@ -3,51 +3,102 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="manifest" href="manifest.json">
-<title>ごはんメモ</title>
+<title>個人用食べログ</title>
 <style>
   :root{ color-scheme: light dark; }
   body { font-family: -apple-system, system-ui; margin: 16px; }
-  header { display:flex; gap:8px; align-items:center; }
+  header { display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  h1 { margin:0; font-size:22px; }
   input, textarea, select, button { font-size:16px; width:100%; padding:10px; margin-top:8px; }
   .row { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .three { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; }
   .card { border:1px solid #ddd; border-radius:10px; padding:10px; margin:10px 0; }
   .thumb { width:100%; height:auto; border-radius:8px; display:block; }
   .meta { font-size:12px; color:#666; margin-top:4px; }
   .actions { display:flex; gap:8px; margin-top:8px; }
   #list { margin-top:12px; }
   #empty { color:#999; text-align:center; margin-top:24px; }
+  .toolbar { display:grid; grid-template-columns: 1fr; gap:8px; margin: 8px 0 12px; }
+  @media (min-width:600px){ .toolbar { grid-template-columns: 1fr 1fr; } }
+  .pill { font-size:12px; padding:4px 8px; border:1px solid #ccc; border-radius:999px; margin:2px; display:inline-block; }
+  .small { font-size:12px; }
+  .nowrap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 </style>
 <body>
 <header>
-  <h1 style="margin:0">個人用食事記録</h1>
+  <h1>個人用食べログ</h1>
+  <div style="display:flex; gap:8px;">
+    <button id="exportCsv" title="CSVエクスポート">CSV</button>
+    <button id="exportJson" title="JSONエクスポート">JSON</button>
+    <label class="pill" style="cursor:pointer;">
+      インポート<input id="importFile" type="file" accept=".json,.csv" style="display:none">
+    </label>
+  </div>
 </header>
 
-<!-- 追加フォーム -->
+<!-- 追加/編集フォーム -->
 <div class="card">
-  <!-- カメラ起動をやめ、フォトライブラリから選べるようにする -->
   <input type="file" id="photo" accept="image/*">
-  <input id="title" placeholder="店名 or 商品名">
   <div class="row">
-    <input id="place" placeholder="場所（任意）">
+    <input id="store" placeholder="店名">
+    <input id="product" placeholder="商品名">
+  </div>
+  <div class="three">
+    <input id="price" placeholder="価格（数値）" inputmode="decimal">
     <select id="rating" aria-label="評価">
       <option value="">★評価（任意）</option>
-      <option>★☆☆☆☆</option><option>★★☆☆☆</option>
-      <option>★★★☆☆</option><option>★★★★☆</option><option>★★★★★</option>
+      <option value="1">★☆☆☆☆ (1)</option>
+      <option value="2">★★☆☆☆ (2)</option>
+      <option value="3">★★★☆☆ (3)</option>
+      <option value="4">★★★★☆ (4)</option>
+      <option value="5">★★★★★ (5)</option>
     </select>
+    <input id="place" placeholder="場所（任意）">
   </div>
+  <input id="tags" placeholder="タグ（カンマ区切り：ラーメン, 期間限定 など）">
   <textarea id="note" rows="3" placeholder="感想（味・量・価格・また行く？など）"></textarea>
-  <button id="save">保存する</button>
+  <div class="row">
+    <button id="save">保存する</button>
+    <button id="cancelEdit" style="display:none;background:#eee;">編集キャンセル</button>
+  </div>
+  <div class="small" id="editStatus" style="color:#666; display:none;">編集モード</div>
 </div>
 
-<!-- 検索 -->
-<input id="q" placeholder="検索（店名/商品名・感想）">
+<!-- 検索・並べ替え・絞り込み -->
+<div class="toolbar card">
+  <input id="q" placeholder="検索（店名/商品名・感想・タグ・場所）">
+  <div class="row">
+    <select id="sort">
+      <option value="dateDesc">並べ替え：新しい順</option>
+      <option value="dateAsc">並べ替え：古い順</option>
+      <option value="ratingDesc">並べ替え：評価 高い順</option>
+      <option value="priceAsc">並べ替え：価格 安い順</option>
+      <option value="priceDesc">並べ替え：価格 高い順</option>
+    </select>
+    <select id="minRating">
+      <option value="0">絞り込み：評価 指定なし</option>
+      <option value="1">評価 1以上</option>
+      <option value="2">評価 2以上</option>
+      <option value="3">評価 3以上</option>
+      <option value="4">評価 4以上</option>
+      <option value="5">評価 5のみ</option>
+    </select>
+  </div>
+  <div class="row">
+    <select id="tagFilter">
+      <option value="">タグ絞り込み：指定なし</option>
+    </select>
+    <button id="clearFilters">条件クリア</button>
+  </div>
+</div>
 
 <div id="list"></div>
 <div id="empty" hidden>まだ記録がありません。</div>
 
 <script>
-/* ===== IndexedDB 設定 ===== */
-const DB_NAME = 'meals-db', STORE = 'entries', VER = 2;
+/* ====== IndexedDB 設定 ====== */
+const DB_NAME = 'meals-db', STORE = 'entries', VER = 3;
+
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB_NAME, VER);
@@ -56,8 +107,8 @@ function openDB() {
       if(!db.objectStoreNames.contains(STORE)) {
         const os = db.createObjectStore(STORE, { keyPath: 'id', autoIncrement:true });
         os.createIndex('createdAt','createdAt');
-      } else if (e.oldVersion < 2) {
-        // v2以降はphotoData(DataURL)前提
+      } else {
+        // 既存→新バージョン移行時の軽い整備（createdAt index無い場合に作成）
         const os = req.transaction.objectStore(STORE);
         if (!os.indexNames.contains('createdAt')) os.createIndex('createdAt','createdAt');
       }
@@ -78,11 +129,27 @@ async function addEntry(entry) {
     r.onerror = ()=>rej(r.error);
   });
 }
+async function updateEntry(entry) {
+  const store = await tx('readwrite');
+  return new Promise((res, rej)=>{
+    const r = store.put(entry);
+    r.onsuccess = ()=>res(true);
+    r.onerror = ()=>rej(r.error);
+  });
+}
 async function getAll() {
   const store = await tx('readonly');
   return new Promise((res, rej)=>{
     const r = store.getAll();
     r.onsuccess = ()=>res(r.result.sort((a,b)=>b.createdAt-a.createdAt));
+    r.onerror = ()=>rej(r.error);
+  });
+}
+async function getById(id) {
+  const store = await tx('readonly');
+  return new Promise((res, rej)=>{
+    const r = store.get(id);
+    r.onsuccess = ()=>res(r.result);
     r.onerror = ()=>rej(r.error);
   });
 }
@@ -95,7 +162,7 @@ async function remove(id) {
   });
 }
 
-/* ===== 画像: 長辺1600pxへリサイズ → DataURL保存 ===== */
+/* ====== 画像：長辺1600pxへリサイズ → DataURL保存 ====== */
 function fileToResizedDataURL(file, max=1600, type='image/jpeg', quality=0.85) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -110,11 +177,9 @@ function fileToResizedDataURL(file, max=1600, type='image/jpeg', quality=0.85) {
       const c = document.createElement('canvas');
       c.width = cw; c.height = ch;
       const ctx = c.getContext('2d');
-      // 高品質リサイズ
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, cw, ch);
-      // DataURLで返却（永続表示可）
       const dataURL = c.toDataURL(type, quality);
       resolve(dataURL);
     };
@@ -123,11 +188,17 @@ function fileToResizedDataURL(file, max=1600, type='image/jpeg', quality=0.85) {
   });
 }
 
-/* ===== UI ===== */
+/* ====== UI参照 ====== */
 const el = id => document.getElementById(id);
-const photo = el('photo'), titleEl = el('title'), placeEl = el('place');
-const ratingEl = el('rating'), noteEl = el('note'), saveBtn = el('save');
-const q = el('q'), list = el('list'), empty = el('empty');
+const photo = el('photo'), storeEl = el('store'), productEl = el('product');
+const priceEl = el('price'), ratingEl = el('rating'), placeEl = el('place');
+const tagsEl = el('tags'), noteEl = el('note'), saveBtn = el('save'), cancelEditBtn = el('cancelEdit');
+const q = el('q'), list = el('list'), empty = el('empty'), sortSel = el('sort'), minRatingSel = el('minRating');
+const tagFilterSel = el('tagFilter'), clearFiltersBtn = el('clearFilters');
+const exportCsvBtn = el('exportCsv'), exportJsonBtn = el('exportJson'), importFile = el('importFile');
+const editStatus = el('editStatus');
+
+let editId = null; // 編集中ID
 
 function fmtDate(ts){
   const d = new Date(ts);
@@ -135,70 +206,302 @@ function fmtDate(ts){
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-async function render(filter=''){
-  const items = await getAll();
+function parseTags(str) {
+  return (str||'').split(',').map(s=>s.trim()).filter(Boolean);
+}
+function joinTags(arr) {
+  return (arr||[]).join(', ');
+}
+
+/* ====== 一覧描画 ====== */
+async function render(){
+  let items = await getAll();
+
+  // フリーテキスト検索
+  const f = (q.value||'').trim().toLowerCase();
+  if (f) {
+    items = items.filter(it => {
+      const hay = [
+        it.store, it.product, it.place, it.note, joinTags(it.tags)
+      ].join(' ').toLowerCase();
+      return hay.includes(f);
+    });
+  }
+
+  // 絞り込み（タグ）
+  const tagF = tagFilterSel.value;
+  if (tagF) {
+    items = items.filter(it => (it.tags||[]).includes(tagF));
+  }
+
+  // 絞り込み（評価）
+  const minR = Number(minRatingSel.value||0);
+  if (minR > 0) items = items.filter(it => Number(it.rating||0) >= minR);
+
+  // 並べ替え
+  const sort = sortSel.value;
+  items.sort((a,b) => {
+    if (sort === 'dateAsc') return (a.createdAt||0) - (b.createdAt||0);
+    if (sort === 'dateDesc') return (b.createdAt||0) - (a.createdAt||0);
+    if (sort === 'ratingDesc') return (Number(b.rating||0) - Number(a.rating||0)) || ((b.createdAt||0)-(a.createdAt||0));
+    if (sort === 'priceAsc') return (Number(a.price||0) - Number(b.price||0)) || ((b.createdAt||0)-(a.createdAt||0));
+    if (sort === 'priceDesc') return (Number(b.price||0) - Number(a.price||0)) || ((b.createdAt||0)-(a.createdAt||0));
+    return 0;
+  });
+
+  // タグ選択肢更新
+  const allTags = new Set();
+  (await getAll()).forEach(it => (it.tags||[]).forEach(t => allTags.add(t)));
+  const prev = tagFilterSel.value;
+  tagFilterSel.innerHTML = `<option value="">タグ絞り込み：指定なし</option>` +
+    [...allTags].sort().map(t => `<option value="${t}">${t}</option>`).join('');
+  tagFilterSel.value = prev; // 保持
+
+  // 描画
   list.innerHTML = '';
-  const f = filter.trim().toLowerCase();
   let cnt = 0;
   for(const it of items){
-    const hay = `${it.title||''} ${it.place||''} ${it.note||''}`.toLowerCase();
-    if(f && !hay.includes(f)) continue;
     cnt++;
     const card = document.createElement('div'); card.className='card';
 
     if (it.photoData) {
       const img = document.createElement('img');
-      img.className='thumb';
-      img.alt = it.title || 'photo';
-      img.loading = 'lazy';
-      img.src = it.photoData;  // DataURLなので再起動後も表示OK
+      img.className='thumb'; img.alt = it.product || it.store || 'photo'; img.loading='lazy';
+      img.src = it.photoData;
       card.appendChild(img);
     }
 
-    const h2 = document.createElement('h3'); h2.textContent = it.title || '(名称未入力)';
-    const meta = document.createElement('div'); meta.className='meta';
-    meta.textContent = [it.place, it.rating, fmtDate(it.createdAt)].filter(Boolean).join('・');
-    const memo = document.createElement('div'); memo.textContent = it.note || '';
-    const actions = document.createElement('div'); actions.className='actions';
-    const del = document.createElement('button'); del.textContent = '削除';
-    del.onclick = async ()=>{ if(confirm('削除しますか？')){ await remove(it.id); render(q.value); } };
-    actions.appendChild(del);
+    const titleLine = document.createElement('div');
+    titleLine.innerHTML = `<strong>${it.product || '(商品名なし)'} </strong><span class="small"> @ ${it.store || '(店名なし)'}</span>`;
 
-    card.append(h2, meta, memo, actions);
+    const meta = document.createElement('div'); meta.className='meta';
+    const bits = [];
+    if (it.price != null && it.price !== '') bits.push(`¥${Number(it.price).toLocaleString()}`);
+    if (it.rating) bits.push(`★${it.rating}`);
+    if (it.place) bits.push(it.place);
+    bits.push(fmtDate(it.createdAt));
+    meta.textContent = bits.join('・');
+
+    const tags = document.createElement('div');
+    (it.tags||[]).forEach(t=>{
+      const span = document.createElement('span'); span.className='pill'; span.textContent = t; tags.appendChild(span);
+    });
+
+    const memo = document.createElement('div'); memo.textContent = it.note || '';
+
+    const actions = document.createElement('div'); actions.className='actions';
+    const editBtn = document.createElement('button'); editBtn.textContent='編集';
+    editBtn.onclick = ()=> startEdit(it.id);
+    const del = document.createElement('button'); del.textContent = '削除';
+    del.onclick = async ()=>{ if(confirm('削除しますか？')){ await remove(it.id); render(); } };
+    actions.append(editBtn, del);
+
+    card.append(titleLine, meta, tags, memo, actions);
     list.appendChild(card);
   }
   empty.hidden = cnt !== 0;
 }
 
+/* ====== 編集開始・キャンセル ====== */
+async function startEdit(id){
+  const it = await getById(id);
+  if (!it) return;
+  editId = id;
+  editStatus.style.display = 'block';
+  cancelEditBtn.style.display = 'block';
+
+  storeEl.value = it.store || '';
+  productEl.value = it.product || '';
+  priceEl.value = it.price != null ? String(it.price) : '';
+  ratingEl.value = it.rating != null ? String(it.rating) : '';
+  placeEl.value = it.place || '';
+  tagsEl.value = joinTags(it.tags);
+  noteEl.value = it.note || '';
+  photo.value = ''; // 既存画像はそのまま。変更時のみ選ぶ
+}
+
+function cancelEdit(){
+  editId = null;
+  editStatus.style.display = 'none';
+  cancelEditBtn.style.display = 'none';
+  storeEl.value = ''; productEl.value=''; priceEl.value=''; ratingEl.value='';
+  placeEl.value=''; tagsEl.value=''; noteEl.value=''; photo.value='';
+}
+
+/* ====== 保存（新規/更新） ====== */
 saveBtn.onclick = async ()=>{
   saveBtn.disabled = true;
   try{
-    let photoData = '';
+    let photoDataNew = '';
     if (photo.files && photo.files[0]) {
-      photoData = await fileToResizedDataURL(photo.files[0]); // ← DataURL
+      photoDataNew = await fileToResizedDataURL(photo.files[0]);
     }
-    const entry = {
-      title: titleEl.value.trim(),
+
+    const base = {
+      store: storeEl.value.trim(),
+      product: productEl.value.trim(),
+      price: priceEl.value.trim()===''? '' : Number(priceEl.value),
+      rating: ratingEl.value ? Number(ratingEl.value) : '',
       place: placeEl.value.trim(),
-      rating: ratingEl.value,
-      note: noteEl.value.trim(),
-      createdAt: Date.now(),
-      photoData // ← これだけ保存すればOK
+      tags: parseTags(tagsEl.value),
+      note: noteEl.value.trim()
     };
-    await addEntry(entry);
-    titleEl.value = ''; placeEl.value=''; ratingEl.value=''; noteEl.value=''; photo.value='';
-    render(q.value);
+
+    if (editId) {
+      const existing = await getById(editId);
+      if (!existing) { alert('編集対象が見つかりません'); return; }
+      const updated = {
+        ...existing,
+        ...base,
+        // 画像は選び直した時だけ更新。未選択なら既存を保持
+        photoData: photoDataNew || existing.photoData,
+        updatedAt: Date.now()
+      };
+      await updateEntry(updated);
+    } else {
+      const entry = {
+        ...base,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        photoData: photoDataNew || ''
+      };
+      await addEntry(entry);
+    }
+    cancelEdit();
+    await render();
     alert('保存しました');
   } catch(e){ alert('保存に失敗しました: ' + e); }
   finally{ saveBtn.disabled = false; }
 };
 
-q.oninput = ()=>render(q.value);
+cancelEditBtn.onclick = cancelEdit;
 
-/* Service Worker 登録 */
+/* ====== 絞り込み/並べ替え ====== */
+[q, sortSel, minRatingSel, tagFilterSel].forEach(elm => {
+  elm.addEventListener('input', render);
+});
+clearFiltersBtn.onclick = ()=>{
+  q.value=''; sortSel.value='dateDesc'; minRatingSel.value='0'; tagFilterSel.value='';
+  render();
+};
+
+/* ====== エクスポート ====== */
+async function downloadBlob(filename, mime, data){
+  const blob = new Blob([data], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+}
+
+function toCsvRow(arr){
+  // CSVの基本エスケープ（" を "" に、カンマや改行があれば全体を "" 囲い）
+  return arr.map(v=>{
+    const s = (v==null)? '' : String(v);
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
+    return s;
+  }).join(',');
+}
+
+exportCsvBtn.onclick = async ()=>{
+  const items = await getAll();
+  const header = ['createdAt','updatedAt','store','product','price','rating','place','tags','note'];
+  const lines = [toCsvRow(header)];
+  for (const it of items){
+    lines.push(toCsvRow([
+      it.createdAt || '',
+      it.updatedAt || '',
+      it.store || '',
+      it.product || '',
+      it.price ?? '',
+      it.rating ?? '',
+      it.place || '',
+      joinTags(it.tags),
+      it.note || ''
+      // 写真はCSVでは出しません（巨大化を避けるため）
+    ]));
+  }
+  downloadBlob(`meals_${Date.now()}.csv`, 'text/csv;charset=utf-8', lines.join('\n'));
+};
+
+exportJsonBtn.onclick = async ()=>{
+  const items = await getAll();
+  // JSONは写真DataURLも含む完全バックアップ
+  downloadBlob(`meals_${Date.now()}.json`, 'application/json;charset=utf-8', JSON.stringify(items));
+};
+
+/* ====== インポート（JSON/CSV） ====== */
+importFile.onchange = async (e)=>{
+  const file = e.target.files?.[0];
+  if (!file) return;
+  try{
+    const text = await file.text();
+    if (file.name.toLowerCase().endsWith('.json')) {
+      const arr = JSON.parse(text);
+      if (!Array.isArray(arr)) throw new Error('JSONは配列形式である必要があります');
+      for (const it of arr) {
+        const entry = {
+          store: it.store||'',
+          product: it.product||'',
+          price: (it.price===''||it.price==null)? '' : Number(it.price),
+          rating: (it.rating===''||it.rating==null)? '' : Number(it.rating),
+          place: it.place||'',
+          tags: Array.isArray(it.tags)? it.tags : parseTags(it.tags||''),
+          note: it.note||'',
+          photoData: it.photoData||'',
+          createdAt: it.createdAt || Date.now(),
+          updatedAt: Date.now()
+        };
+        await addEntry(entry);
+      }
+    } else {
+      // 簡易CSV: ヘッダ期待 createdAt,updatedAt,store,product,price,rating,place,tags,note
+      const lines = text.replace(/\r/g,'').split('\n').filter(Boolean);
+      const header = lines.shift().split(',').map(s=>s.trim().replace(/^"|"$/g,''));
+      const idx = name => header.indexOf(name);
+      for (const line of lines){
+        // ざっくりCSVパース（引用符対応）
+        const cells = [];
+        let cur = '', inQ = false;
+        for (let i=0;i<line.length;i++){
+          const ch = line[i];
+          if (inQ) {
+            if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
+            else if (ch === '"') { inQ = false; }
+            else { cur += ch; }
+          } else {
+            if (ch === '"') inQ = true;
+            else if (ch === ',') { cells.push(cur); cur=''; }
+            else { cur += ch; }
+          }
+        }
+        cells.push(cur);
+        const get = (name)=> cells[idx(name)] ?? '';
+        const entry = {
+          store: get('store'),
+          product: get('product'),
+          price: get('price')===''? '' : Number(get('price')),
+          rating: get('rating')===''? '' : Number(get('rating')),
+          place: get('place'),
+          tags: parseTags(get('tags')),
+          note: get('note'),
+          photoData: '', // CSVは写真を含めない
+          createdAt: Number(get('createdAt')) || Date.now(),
+          updatedAt: Date.now()
+        };
+        await addEntry(entry);
+      }
+    }
+    alert('インポート完了しました');
+    importFile.value = '';
+    render();
+  } catch(err){
+    alert('インポートに失敗しました: ' + err.message);
+  }
+};
+
+/* ====== 初期化 ====== */
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js'); }
-
-/* 初期描画 */
 render();
 </script>
 </body>

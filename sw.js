@@ -1,5 +1,5 @@
-// GitHub Pagesのサブパスでも動くように相対パスでキャッシュ
-const CACHE = 'meals-v2';
+// 相対パスでキャッシュ（GitHub Pagesのサブパス対応）
+const CACHE = 'meals-v3';
 const ASSETS = ['./', './index.html', './manifest.json', './sw.js'];
 
 self.addEventListener('install', e => {
@@ -12,9 +12,6 @@ self.addEventListener('activate', e => {
   ));
 });
 
-// 基本はキャッシュ優先（初回取得後はオフラインOK）
 self.addEventListener('fetch', e => {
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request))
-  );
+  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
 });
