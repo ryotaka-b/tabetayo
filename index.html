@@ -44,7 +44,7 @@
     <input id="product" placeholder="商品名">
   </div>
   <div class="three">
-    <input id="price" placeholder="価格（数値）" inputmode="decimal">
+    <input id="price" placeholder="価格" inputmode="decimal">
     <select id="rating" aria-label="評価">
       <option value="">★評価（任意）</option>
       <option value="1">★☆☆☆☆ (1)</option>
@@ -53,10 +53,10 @@
       <option value="4">★★★★☆ (4)</option>
       <option value="5">★★★★★ (5)</option>
     </select>
-    <input id="place" placeholder="場所（任意）">
+    <input id="place" placeholder="場所">
   </div>
-  <input id="tags" placeholder="タグ（カンマ区切り：ラーメン, 期間限定 など）">
-  <textarea id="note" rows="3" placeholder="感想（味・量・価格・また行く？など）"></textarea>
+  <input id="tags" placeholder="タグ（カンマ区切り）">
+  <textarea id="note" rows="3" placeholder="感想"></textarea>
   <div class="row">
     <button id="save">保存する</button>
     <button id="cancelEdit" style="display:none;background:#eee;">編集キャンセル</button>
@@ -66,7 +66,7 @@
 
 <!-- 検索・並べ替え・絞り込み -->
 <div class="toolbar card">
-  <input id="q" placeholder="検索（店名/商品名・感想・タグ・場所）">
+  <input id="q" placeholder="検索（店名・商品名・感想・タグ・場所）">
   <div class="row">
     <select id="sort">
       <option value="dateDesc">並べ替え：新しい順</option>
